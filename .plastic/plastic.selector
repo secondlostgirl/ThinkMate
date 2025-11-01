@@ -1,0 +1,4 @@
+repository "ThinkMate/ThinkMate@18967879641499@cloud"
+  path "/"
+    br "/main"
+    co "/main"

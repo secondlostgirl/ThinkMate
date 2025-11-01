@@ -1,0 +1,27 @@
+# Unity cache/build klasörleri
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+UserSettings/
+SysInfo/
+*.pidb
+*.csproj
+*.sln
+*.user
+*.vs/
+.vscode/
+.idea/
+
+# Android / iOS / video vs
+.gradle/
+*.apk
+*.aab
+DerivedData/
+
+# Yalnızca şunları dahil et
+!Assets/
+!Packages/
+!ProjectSettings/
