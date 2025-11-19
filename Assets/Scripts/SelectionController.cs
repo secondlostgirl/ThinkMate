@@ -11,8 +11,8 @@ public class SelectionController : MonoBehaviour
     // Seçili kare için vurgu
     public Material highlightMat;
 
-    private Tile selectedTile;          // highlight'lı kare
-    private Piece selectedPiece;        // seçili taş
+    private Tile  selectedTile;   // highlight'lı kare
+    private Piece selectedPiece;  // seçili taş
 
     void Awake()
     {
@@ -83,6 +83,13 @@ public class SelectionController : MonoBehaviour
                (TurnManager.I.current == Turn.Black && side == PieceSide.Black);
     }
 
+    // --- Yardımcı: güvenli Renderer bulucu (tile.rend boşsa GetComponent ile bulur)
+    Renderer GetRenderer(Tile t)
+    {
+        if (t == null) return null;
+        return t.rend != null ? t.rend : t.GetComponent<Renderer>();
+    }
+
     void SetSelection(Tile tile, Piece piece)
     {
         // Eski highlight'ı kapat
@@ -91,17 +98,17 @@ public class SelectionController : MonoBehaviour
         selectedTile  = tile;
         selectedPiece = piece;
 
-        if (selectedTile.rend != null) selectedTile.rend.sharedMaterial = highlightMat;
+        var r = GetRenderer(selectedTile);
+        if (r) r.sharedMaterial = highlightMat;
 
-        // Debug.Log($"Selected: {selectedPiece.side} {selectedPiece.type} at {Format(tile)}");
+        // Debug.Log($"Selected: {selectedPiece.side} {selectedPiece.type} at {(char)('A'+tile.x)}{tile.z+1}");
     }
-
-    string Format(Tile t) => $"{(char)('A' + t.x)}{t.z + 1}";
 
     void ResetTileVisual(Tile t)
     {
-        if (t == null || t.rend == null) return;
-        t.rend.sharedMaterial = t.isLight ? normalLightMat : normalDarkMat;
+        var r = GetRenderer(t);
+        if (!r) return;
+        r.sharedMaterial = t.isLight ? normalLightMat : normalDarkMat;
     }
 
     void ClearSelection()

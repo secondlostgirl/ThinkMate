@@ -1,17 +1,28 @@
 using UnityEngine;
 
-public enum PieceType { Pawn, Rook, Knight, Bishop, Queen, King }
-public enum PieceSide { White, Black }
-
+[DisallowMultipleComponent]
+[RequireComponent(typeof(SpriteRenderer))]
 public class Piece : MonoBehaviour
 {
     public PieceType type;
     public PieceSide side;
-    public int x, z;                       // tahtadaki konumu
-    public SpriteRenderer sr;              // Visual içindeki SpriteRenderer
+    public int x, z;
 
-    void Reset()                           // Prefab’ta otomatik doldurmak için
+    [SerializeField] public SpriteRenderer sr;
+
+    void Awake()
     {
-        sr = GetComponentInChildren<SpriteRenderer>();
+        if (!sr) sr = GetComponent<SpriteRenderer>();
     }
+
+#if UNITY_EDITOR
+    // Prefaba eklendiğinde/Reset dendiğinde otomatik bağlar
+    void Reset()
+    {
+        sr = GetComponent<SpriteRenderer>();
+    }
+#endif
 }
+
+public enum PieceType { Pawn, Rook, Knight, Bishop, Queen, King }
+public enum PieceSide { White, Black }
