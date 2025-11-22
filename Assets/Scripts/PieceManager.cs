@@ -3,7 +3,6 @@ using UnityEngine;
 [System.Serializable]
 public struct PieceSprites
 {
-    // (İsteğe bağlı) Inspector’dan bağlamak istersen:
     public Sprite wPawn, wRook, wKnight, wBishop, wQueen, wKing;
     public Sprite bPawn, bRook, bKnight, bBishop, bQueen, bKing;
 }
@@ -15,11 +14,14 @@ public class PieceManager : MonoBehaviour
     public int boardSize = 8;
     public float tileSize = 1f;
 
-    // Inspector’dan bağlayabilirsin; boş bırakılırsa Resources’tan yüklenir.
     public PieceSprites sprites;
 
     public Piece[,] grid;
     private Vector2Int? enPassantTarget = null;
+
+    // Terfi ile ilgili
+    public bool promotionPending = false;
+    public Piece promotingPawn = null;
 
     void Awake()
     {
@@ -27,19 +29,16 @@ public class PieceManager : MonoBehaviour
         grid = new Piece[boardSize, boardSize];
     }
 
-Vector3 ToWorld(int file, int rank)
-{
-    float offset = -(boardSize - 1) * 0.5f * tileSize;
+    Vector3 ToWorld(int file, int rank)
+    {
+        float offset = -(boardSize - 1) * 0.5f * tileSize;
 
-    return new Vector3(
-        offset + file * tileSize,   // X
-        offset + rank * tileSize,   // Y   (tahta ile bire bir aynı)
-        0f                          // Z
-    );
-}
-
-
-
+        return new Vector3(
+            offset + file * tileSize,   // X
+            offset + rank * tileSize,   // Y
+            0f
+        );
+    }
 
     public void ClearAll()
     {
@@ -54,10 +53,9 @@ Vector3 ToWorld(int file, int rank)
         grid = new Piece[boardSize, boardSize];
     }
 
-    // --- Sprite seçici: önce Inspector, boşsa Resources/Sprites/<kod> ---
+    // --- Sprite seçici ---
     Sprite GetSprite(PieceType type, PieceSide side)
     {
-        // 1) Inspector
         Sprite s = null;
         if (side == PieceSide.White)
         {
@@ -85,63 +83,56 @@ Vector3 ToWorld(int file, int rank)
         }
         if (s) return s;
 
-        // 2) Resources fallback (Assets/Resources/Sprites/…)
         string code = (side == PieceSide.White ? "w_" : "b_") + type.ToString().ToLower();
         return Resources.Load<Sprite>("Sprites/" + code);
     }
-public Piece Spawn(PieceType type, PieceSide side, int x, int z, Sprite sprite = null)
-{
-    // 1) Instantiate
-    var p = Instantiate(piecePrefab, ToWorld(x, z), Quaternion.identity, transform);
 
-    p.type = type;
-    p.side = side;
-    p.x = x;
-    p.z = z;
-
-    // 2) Sprite seç
-    var s = sprite ? sprite : GetSprite(type, side);
-
-    if (!p.sr)
-        Debug.LogError("Piece prefabında SpriteRenderer (sr) bağlı değil!");
-
-    if (p.sr)
-        p.sr.sprite = s;
-
-    if (s == null)
+    public Piece Spawn(PieceType type, PieceSide side, int x, int z, Sprite sprite = null)
     {
-        Debug.LogWarning($"Sprite not found -> Resources/Sprites/" +
-            ((side == PieceSide.White ? "w_" : "b_") + type.ToString().ToLower()));
-    }
-    else
-    {
-        // 3) Sprite boyutuna göre ölçek hesapla
-        //    (Sprite'ı kare içine sığdırmak için)
-        // bounds.size.x = sprite'ın world-space'te genişliği (birim cinsinden)
-        float spriteWidthUnits = s.bounds.size.x; // kare genişliği için yeterli
-        if (spriteWidthUnits > 0f)
+        var p = Instantiate(piecePrefab, ToWorld(x, z), Quaternion.identity, transform);
+
+        p.type = type;
+        p.side = side;
+        p.x = x;
+        p.z = z;
+        p.hasMoved = false;
+
+        var s = sprite ? sprite : GetSprite(type, side);
+
+        if (!p.sr)
+            Debug.LogError("Piece prefabında SpriteRenderer (sr) bağlı değil!");
+
+        if (p.sr)
+            p.sr.sprite = s;
+
+        if (s == null)
         {
-            // taşın genişliği tileSize olacak şekilde scale hesapla
-            float scale = (tileSize / spriteWidthUnits) * 0.9f; // 0.9 biraz içerden dursun diye
-            p.transform.localScale = Vector3.one * scale;
+            Debug.LogWarning($"Sprite not found -> Resources/Sprites/" +
+                ((side == PieceSide.White ? "w_" : "b_") + type.ToString().ToLower()));
         }
         else
         {
-            // fallback: eskisi gibi
-            p.transform.localScale = Vector3.one * 0.9f;
+            float spriteWidthUnits = s.bounds.size.x;
+            if (spriteWidthUnits > 0f)
+            {
+                float scale = (tileSize / spriteWidthUnits) * 0.9f;
+                p.transform.localScale = Vector3.one * scale;
+            }
+            else
+            {
+                p.transform.localScale = Vector3.one * 0.9f;
+            }
         }
+
+        p.name = $"{side}_{type}_{(char)('A' + x)}{z + 1}";
+        grid[x, z] = p;
+
+        return p;
     }
-
-    // 4) İsim ve grid kaydı
-    p.name = $"{side}_{type}_{(char)('A' + x)}{z + 1}";
-    grid[x, z] = p;
-
-    return p;
-}
-
 
     public Piece GetAt(int x, int z) => InBounds(x, z) ? grid[x, z] : null;
 
+    // ================== ANA MOVE ==================
     public bool Move(Piece p, int toX, int toZ)
     {
         if (!InBounds(toX, toZ)) return false;
@@ -150,40 +141,64 @@ public Piece Spawn(PieceType type, PieceSide side, int x, int z, Sprite sprite =
         var target = grid[toX, toZ];
         if (target && target.side == p.side) return false;
 
-        // --- PİYON KURALLARI ---
+        int dx = toX - p.x;
+        int dz = toZ - p.z;
+        int absDx = Mathf.Abs(dx);
+        int absDz = Mathf.Abs(dz);
+
+        // ---------- PİYON ----------
         if (p.type == PieceType.Pawn)
         {
-            int dir = (p.side == PieceSide.White) ? +1 : -1;
-            int startZ = (p.side == PieceSide.White) ? 1 : 6;
+            int dir    = (p.side == PieceSide.White) ? +1 : -1;
+            int startZ = (p.side == PieceSide.White) ? 1  : 6;
 
-            int dz = toZ - p.z;
-            int dx = Mathf.Abs(toX - p.x);
+            int dzPawn = toZ - p.z;
+            int dxPawn = Mathf.Abs(toX - p.x);
 
-            // 1) Düz 1 kare
-            if (dx == 0 && dz == dir && grid[toX, toZ] == null)
-                return ApplyMove(p, toX, toZ);
+            // 1 kare düz
+            if (dxPawn == 0 && dzPawn == dir && grid[toX, toZ] == null)
+            {
+                if (WouldLeaveKingInCheck(p, toX, toZ))
+                    return false;
 
-            // 2) İlk hamlede 2 kare
-            if (dx == 0 && p.z == startZ && dz == 2 * dir)
+                enPassantTarget = null;
+                bool moved = ApplyMove(p, toX, toZ);
+                CheckPromotion(p);
+                return moved;
+            }
+
+            // 2 kare ilk hamle
+            if (dxPawn == 0 && p.z == startZ && dzPawn == 2 * dir)
             {
                 int midZ = p.z + dir;
                 if (grid[toX, midZ] == null && grid[toX, toZ] == null)
                 {
+                    if (WouldLeaveKingInCheck(p, toX, toZ))
+                        return false;
+
                     enPassantTarget = new Vector2Int(toX, midZ);
-                    return ApplyMove(p, toX, toZ);
+                    return ApplyMove(p, toX, toZ);  // buradan terfi olamaz zaten
                 }
                 return false;
             }
 
-            // 3) Çapraz 1 kare: alma veya en passant
-            if (dx == 1 && dz == dir)
+            // Çapraz alma
+            if (dxPawn == 1 && dzPawn == dir)
             {
+                // normal capture
                 if (target != null && target.side != p.side)
                 {
+                    if (WouldLeaveKingInCheck(p, toX, toZ))
+                        return false;
+
                     Destroy(target.gameObject);
-                    return ApplyMove(p, toX, toZ);
+                    enPassantTarget = null;
+                    bool moved = ApplyMove(p, toX, toZ);
+                    CheckPromotion(p);
+                    return moved;
                 }
 
+                // en passant
                 if (enPassantTarget.HasValue &&
                     enPassantTarget.Value.x == toX &&
                     enPassantTarget.Value.y == toZ)
@@ -192,25 +207,395 @@ public Piece Spawn(PieceType type, PieceSide side, int x, int z, Sprite sprite =
                     var captured = grid[toX, capturedZ];
                     if (captured != null && captured.side != p.side && captured.type == PieceType.Pawn)
                     {
+                        // (Tam doğru legality için burada da WouldLeaveKingInCheck ile
+                        // ayrı simülasyon yapmak lazım, MVP’de şimdilik basit bıraktık.)
+
                         Destroy(captured.gameObject);
                         grid[toX, capturedZ] = null;
+                        enPassantTarget = null;
                         return ApplyMove(p, toX, toZ);
                     }
                 }
             }
+
             return false;
         }
 
-        // Diğer taşlar: sonra eklenecek
+        // piyon dışında en passant sıfırlansın
+        enPassantTarget = null;
+
+        // ---------- ROOK ----------
+        if (p.type == PieceType.Rook)
+        {
+            if (p.x != toX && p.z != toZ) return false;
+            if (!IsPathClearStraight(p.x, p.z, toX, toZ)) return false;
+
+            if (WouldLeaveKingInCheck(p, toX, toZ))
+                return false;
+
+            if (target != null && target.side != p.side)
+                Destroy(target.gameObject);
+
+            return ApplyMove(p, toX, toZ);
+        }
+
+        // ---------- BISHOP ----------
+        if (p.type == PieceType.Bishop)
+        {
+            if (absDx != absDz) return false;
+            if (!IsPathClearDiagonal(p.x, p.z, toX, toZ)) return false;
+
+            if (WouldLeaveKingInCheck(p, toX, toZ))
+                return false;
+
+            if (target != null && target.side != p.side)
+                Destroy(target.gameObject);
+
+            return ApplyMove(p, toX, toZ);
+        }
+
+        // ---------- QUEEN ----------
+        if (p.type == PieceType.Queen)
+        {
+            bool straight = (p.x == toX || p.z == toZ);
+            bool diagonal = (absDx == absDz);
+
+            if (!straight && !diagonal) return false;
+
+            if (straight && !IsPathClearStraight(p.x, p.z, toX, toZ)) return false;
+            if (diagonal && !IsPathClearDiagonal(p.x, p.z, toX, toZ)) return false;
+
+            if (WouldLeaveKingInCheck(p, toX, toZ))
+                return false;
+
+            if (target != null && target.side != p.side)
+                Destroy(target.gameObject);
+
+            return ApplyMove(p, toX, toZ);
+        }
+
+        // ---------- KNIGHT ----------
+        if (p.type == PieceType.Knight)
+        {
+            bool isKnightMove =
+                (absDx == 1 && absDz == 2) ||
+                (absDx == 2 && absDz == 1);
+
+            if (!isKnightMove) return false;
+
+            if (WouldLeaveKingInCheck(p, toX, toZ))
+                return false;
+
+            if (target != null && target.side != p.side)
+                Destroy(target.gameObject);
+
+            return ApplyMove(p, toX, toZ);
+        }
+
+        // ---------- KING (ŞAH + ROK) ----------
+        if (p.type == PieceType.King)
+        {
+            // 1) ROK
+            if (!p.hasMoved && dz == 0 && absDx == 2)
+            {
+                int dir = dx > 0 ? 1 : -1;
+                int rookFromX = (dir > 0) ? boardSize - 1 : 0;
+                int rookZ = p.z;
+
+                Piece rook = grid[rookFromX, rookZ];
+
+                if (rook != null &&
+                    rook.type == PieceType.Rook &&
+                    rook.side == p.side &&
+                    !rook.hasMoved)
+                {
+                    if (IsPathClearStraight(p.x, p.z, rookFromX, rookZ))
+                    {
+                        int kingToX = p.x + 2 * dir;
+                        int rookToX = kingToX - dir;
+
+                        // (Tam rok legality için kralın geçtiği karelerin tehdit altında
+                        // olmaması lazım, onu sonra ekleyebiliriz.)
+
+                        grid[p.x, p.z] = null;
+                        grid[rookFromX, rookZ] = null;
+
+                        p.x = kingToX;
+                        p.z = rookZ;
+                        p.transform.position = ToWorld(p.x, p.z);
+
+                        rook.x = rookToX;
+                        rook.z = rookZ;
+                        rook.transform.position = ToWorld(rook.x, rook.z);
+
+                        grid[p.x, p.z] = p;
+                        grid[rook.x, rook.z] = rook;
+
+                        p.hasMoved = true;
+                        rook.hasMoved = true;
+                        enPassantTarget = null;
+
+                        return true;
+                    }
+                }
+                // ROK olmadıysa normal king hareketine geç
+            }
+
+            // 2) Normal şah
+            if (absDx > 1 || absDz > 1) return false;
+            if (absDx == 0 && absDz == 0) return false;
+
+            if (WouldLeaveKingInCheck(p, toX, toZ))
+                return false;
+
+            if (target != null && target.side != p.side)
+                Destroy(target.gameObject);
+
+            enPassantTarget = null;
+            return ApplyMove(p, toX, toZ);
+        }
+
         return false;
+    }
+
+    // ====== TERFİ YARDIMCILARI ======
+
+    void CheckPromotion(Piece p)
+    {
+        if (p.type != PieceType.Pawn) return;
+
+        int lastRank = (p.side == PieceSide.White) ? 7 : 0;
+
+        if (p.z == lastRank)
+        {
+            promotionPending = true;
+            promotingPawn = p;
+
+            if (PromotionUI.Instance != null)
+            {
+                PromotionUI.Instance.Show(p.side);
+            }
+            else
+            {
+                Debug.LogWarning("PromotionUI yok, piyon terfisi için otomatik vezir yapabilirsin.");
+            }
+        }
+    }
+
+    public void PromotePawn(PieceType toType)
+    {
+        if (!promotionPending || promotingPawn == null)
+        {
+            Debug.LogWarning("PromotePawn çağrıldı ama bekleyen piyon yok.");
+            return;
+        }
+
+        Piece p = promotingPawn;
+
+        if (p.type != PieceType.Pawn)
+        {
+            Debug.LogWarning("PromotePawn: promotingPawn piyon değil.");
+            promotionPending = false;
+            promotingPawn = null;
+            return;
+        }
+
+        p.type = toType;
+
+        var s = GetSprite(toType, p.side);
+        if (p.sr != null && s != null)
+            p.sr.sprite = s;
+
+        promotionPending = false;
+        promotingPawn = null;
+
+        Debug.Log($"Pawn promoted to {toType} at {(char)('A' + p.x)}{p.z + 1}");
+    }
+
+    // ====== CHECK / KING YARDIMCILARI ======
+
+    PieceSide Opponent(PieceSide side)
+    {
+        return side == PieceSide.White ? PieceSide.Black : PieceSide.White;
+    }
+
+    Piece FindKing(PieceSide side)
+    {
+        for (int x = 0; x < boardSize; x++)
+        {
+            for (int z = 0; z < boardSize; z++)
+            {
+                var p = grid[x, z];
+                if (p != null && p.type == PieceType.King && p.side == side)
+                    return p;
+            }
+        }
+        return null;
+    }
+
+    bool IsSquareAttacked(int x, int z, PieceSide bySide)
+    {
+        for (int fx = 0; fx < boardSize; fx++)
+        {
+            for (int fz = 0; fz < boardSize; fz++)
+            {
+                var attacker = grid[fx, fz];
+                if (attacker == null || attacker.side != bySide) continue;
+
+                int dx = x - fx;
+                int dz = z - fz;
+                int absDx = Mathf.Abs(dx);
+                int absDz = Mathf.Abs(dz);
+
+                switch (attacker.type)
+                {
+                    case PieceType.Pawn:
+                    {
+                        int dir = (bySide == PieceSide.White) ? +1 : -1;
+                        if (dz == dir && absDx == 1)
+                            return true;
+                        break;
+                    }
+                    case PieceType.Knight:
+                    {
+                        bool isKnightMove =
+                            (absDx == 1 && absDz == 2) ||
+                            (absDx == 2 && absDz == 1);
+                        if (isKnightMove) return true;
+                        break;
+                    }
+                    case PieceType.Bishop:
+                    {
+                        if (absDx == absDz &&
+                            IsPathClearDiagonal(fx, fz, x, z))
+                            return true;
+                        break;
+                    }
+                    case PieceType.Rook:
+                    {
+                        if ((fx == x || fz == z) &&
+                            IsPathClearStraight(fx, fz, x, z))
+                            return true;
+                        break;
+                    }
+                    case PieceType.Queen:
+                    {
+                        bool straight = (fx == x || fz == z);
+                        bool diagonal = (absDx == absDz);
+
+                        if (straight && IsPathClearStraight(fx, fz, x, z))
+                            return true;
+                        if (diagonal && IsPathClearDiagonal(fx, fz, x, z))
+                            return true;
+                        break;
+                    }
+                    case PieceType.King:
+                    {
+                        if (absDx <= 1 && absDz <= 1 && (absDx + absDz > 0))
+                            return true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    bool IsKingInCheck(PieceSide side)
+    {
+        var king = FindKing(side);
+        if (king == null) return false;
+
+        return IsSquareAttacked(king.x, king.z, Opponent(side));
+    }
+
+    bool WouldLeaveKingInCheck(Piece p, int toX, int toZ)
+    {
+        PieceSide side = p.side;
+
+        int fromX = p.x;
+        int fromZ = p.z;
+        Piece captured = grid[toX, toZ];
+
+        grid[fromX, fromZ] = null;
+        p.x = toX;
+        p.z = toZ;
+        grid[toX, toZ] = p;
+
+        bool inCheck = IsKingInCheck(side);
+
+        grid[toX, toZ] = captured;
+        p.x = fromX;
+        p.z = fromZ;
+        grid[fromX, fromZ] = p;
+
+        return inCheck;
+    }
+
+    // ================== PATH & GENEL ==================
+
+    bool IsPathClearStraight(int fromX, int fromZ, int toX, int toZ)
+    {
+        if (fromX != toX && fromZ != toZ)
+            return false;
+
+        int stepX = toX == fromX ? 0 : (toX > fromX ? 1 : -1);
+        int stepZ = toZ == fromZ ? 0 : (toZ > fromZ ? 1 : -1);
+
+        int x = fromX + stepX;
+        int z = fromZ + stepZ;
+
+        while (x != toX || z != toZ)
+        {
+            if (grid[x, z] != null)
+                return false;
+
+            x += stepX;
+            z += stepZ;
+        }
+
+        return true;
+    }
+
+    bool IsPathClearDiagonal(int fromX, int fromZ, int toX, int toZ)
+    {
+        int dx = toX - fromX;
+        int dz = toZ - fromZ;
+
+        if (Mathf.Abs(dx) != Mathf.Abs(dz))
+            return false;
+
+        int stepX = dx > 0 ? 1 : -1;
+        int stepZ = dz > 0 ? 1 : -1;
+
+        int x = fromX + stepX;
+        int z = fromZ + stepZ;
+
+        while (x != toX || z != toZ)
+        {
+            if (grid[x, z] != null)
+                return false;
+
+            x += stepX;
+            z += stepZ;
+        }
+
+        return true;
     }
 
     bool ApplyMove(Piece p, int toX, int toZ)
     {
         grid[p.x, p.z] = null;
-        p.x = toX; p.z = toZ;
+
+        p.x = toX;
+        p.z = toZ;
         p.transform.position = ToWorld(toX, toZ);
+
         grid[toX, toZ] = p;
+
+        p.hasMoved = true;
+
         return true;
     }
 
@@ -220,12 +605,9 @@ public Piece Spawn(PieceType type, PieceSide side, int x, int z, Sprite sprite =
     {
         ClearAll();
 
-        // Beyaz piyonlar
         for (int x = 0; x < 8; x++) Spawn(PieceType.Pawn, PieceSide.White, x, 1);
-        // Siyah piyonlar
         for (int x = 0; x < 8; x++) Spawn(PieceType.Pawn, PieceSide.Black, x, 6);
 
-        // Arka sıra: R N B Q K B N R
         PieceType[] back = {
             PieceType.Rook, PieceType.Knight, PieceType.Bishop, PieceType.Queen,
             PieceType.King, PieceType.Bishop, PieceType.Knight, PieceType.Rook

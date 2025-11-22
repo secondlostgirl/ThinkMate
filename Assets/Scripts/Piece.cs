@@ -9,6 +9,7 @@ public class Piece : MonoBehaviour
     public int x, z;
 
     [SerializeField] public SpriteRenderer sr;
+     public bool hasMoved = false;
 
     void Awake()
     {
