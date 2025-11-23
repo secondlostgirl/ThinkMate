@@ -21,6 +21,11 @@ public class SelectionController : MonoBehaviour
 
     void Update()
     {
+        // Oyun bittiyse veya terfi bekliyorsak input alma
+        if (PieceManager.I != null &&
+            (PieceManager.I.promotionPending || PieceManager.I.gameOver))
+            return;
+
         if (Input.GetMouseButtonDown(0))
             HandleClick(Input.mousePosition);
 
@@ -45,8 +50,14 @@ public class SelectionController : MonoBehaviour
 
     void OnTileClicked(Tile tile)
     {
+        if (PieceManager.I == null) return;
+
+        // Terfi paneli açıkken veya oyun bittiyken hiçbir şey yapma
+        if (PieceManager.I.promotionPending || PieceManager.I.gameOver)
+            return;
+
         // Karede taş var mı?
-        var pieceOnTile = PieceManager.I ? PieceManager.I.GetAt(tile.x, tile.z) : null;
+        var pieceOnTile = PieceManager.I.GetAt(tile.x, tile.z);
 
         // Hiç seçim yoksa ve karede taş varsa: SIRA kontrolüyle seç
         if (selectedPiece == null)
@@ -66,10 +77,10 @@ public class SelectionController : MonoBehaviour
         }
 
         // Hedefe taşıma denemesi
-        bool moved = PieceManager.I && PieceManager.I.Move(selectedPiece, tile.x, tile.z);
+        bool moved = PieceManager.I.Move(selectedPiece, tile.x, tile.z);
         if (moved)
         {
-            TurnManager.I?.Next();     // başarılı hamlede sıra değişsin
+           
         }
 
         // Görseli ve seçimi temizle
@@ -78,9 +89,10 @@ public class SelectionController : MonoBehaviour
 
     bool IsCurrentTurn(PieceSide side)
     {
-        if (TurnManager.I == null) return true; // turn manager yoksa serbest
-        return (TurnManager.I.current == Turn.White && side == PieceSide.White) ||
-               (TurnManager.I.current == Turn.Black && side == PieceSide.Black);
+        // Artık TurnManager yerine PieceManager.sideToMove kullanıyoruz
+        if (PieceManager.I == null) return true;
+
+        return PieceManager.I.sideToMove == side;
     }
 
     // --- Yardımcı: güvenli Renderer bulucu (tile.rend boşsa GetComponent ile bulur)
@@ -100,8 +112,6 @@ public class SelectionController : MonoBehaviour
 
         var r = GetRenderer(selectedTile);
         if (r) r.sharedMaterial = highlightMat;
-
-        // Debug.Log($"Selected: {selectedPiece.side} {selectedPiece.type} at {(char)('A'+tile.x)}{tile.z+1}");
     }
 
     void ResetTileVisual(Tile t)
