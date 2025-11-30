@@ -6,6 +6,7 @@ MonoImporter:
   defaultReferences:
   - piecePrefab: {fileID: -1600557138276476466, guid: 933d2e64a0e52414e80c965f8bfbbe12, type: 3}
   - promotingPawn: {instanceID: 0}
+  - checkHighlightMat: {fileID: 2100000, guid: 9de86a16f79aca242ba72f4262bf7130, type: 2}
   executionOrder: 0
   icon: {instanceID: 0}
   userData: 

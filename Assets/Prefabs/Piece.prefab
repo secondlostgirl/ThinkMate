@@ -187,3 +187,4 @@ MonoBehaviour:
   x: 0
   z: 0
   sr: {fileID: 4703456953415638418}
+  hasMoved: 0

@@ -2,6 +2,7 @@ using UnityEngine;
 using System.Collections.Generic;
 
 [System.Serializable]
+
 public struct PieceSprites
 {
     public Sprite wPawn, wRook, wKnight, wBishop, wQueen, wKing;
@@ -59,6 +60,9 @@ public class PieceManager : MonoBehaviour
     public bool gameOver = false;
     public PieceSide winner;        // checkmate durumunda kazanan
     public bool isStalemate = false; // pat mı değil mi
+    public Material checkHighlightMat;   // Inspector’dan atayacağımız kırmızı overlay
+    private Tile checkHighlightTile;     // şu anda kırmızı olan kare
+
 
     void Awake()
     {
@@ -544,6 +548,24 @@ public class PieceManager : MonoBehaviour
 
         return false;
     }
+// ========== DIŞARIDAN KULLANILABİLEN LEGAL MOVE KONTROLÜ ==========
+public bool IsLegalMove(Piece p, int toX, int toZ)
+{
+    if (!InBounds(toX, toZ)) return false;
+
+    // Zaten o karedeyse gereksiz
+    if (p.x == toX && p.z == toZ) return false;
+
+    // Önce taşın kurallarına göre gidebiliyor mu?
+    if (!CanMoveByRules(p, toX, toZ))
+        return false;
+
+    // Sonra bu hamle şahı açıkta bırakıyor mu?
+    if (WouldLeaveKingInCheck(p, toX, toZ))
+        return false;
+
+    return true;
+}
 
     // ====== HAMLE SONRASI (TURN + GAME OVER) ======
 
@@ -560,32 +582,53 @@ public class PieceManager : MonoBehaviour
         CheckGameOver();
     }
 
-    void CheckGameOver()
+  void CheckGameOver()
+{
+    PieceSide side = sideToMove;   // sıradaki taraf
+
+    bool inCheck = IsKingInCheck(side);
+    bool hasMove = HasAnyLegalMove(side);
+
+    if (!hasMove)
     {
-        PieceSide side = sideToMove;   // sıradaki taraf
+        gameOver = true;
+        isStalemate = !inCheck;
 
-        bool inCheck = IsKingInCheck(side);
-        bool hasMove = HasAnyLegalMove(side);
-
-        if (!hasMove)
+        if (inCheck)
         {
-            gameOver = true;
-            isStalemate = !inCheck;
+            // Şah-mat
+            winner = Opponent(side);
+            Debug.Log($"Checkmate! Winner: {winner}");
 
-            if (inCheck)
+            // 🔥 BURASI ÖNEMLİ
+            if (GameOverUI.Instance != null)
             {
-                // Şah-mat
-                winner = Opponent(side);
-                Debug.Log($"Checkmate! Winner: {winner}");
+                Debug.Log("[PieceManager] Calling GameOverUI.ShowCheckmate");
+                GameOverUI.Instance.ShowCheckmate(winner);
             }
             else
             {
-                // Pat
-                winner = PieceSide.White; // anlamsız ama dolu dursun
-                Debug.Log("Stalemate (Pat). Draw game.");
+                Debug.LogError("[PieceManager] GameOverUI.Instance is NULL");
+            }
+        }
+        else
+        {
+            // Pat
+            Debug.Log("Stalemate (Pat). Draw game.");
+
+            if (GameOverUI.Instance != null)
+            {
+                Debug.Log("[PieceManager] Calling GameOverUI.ShowStalemate");
+                GameOverUI.Instance.ShowStalemate();
+            }
+            else
+            {
+                Debug.LogError("[PieceManager] GameOverUI.Instance is NULL (stalemate)");
             }
         }
     }
+}
+
 
     // Bir tarafın en az bir legal hamlesi var mı?
     bool HasAnyLegalMove(PieceSide side)
@@ -783,6 +826,46 @@ public class PieceManager : MonoBehaviour
         }
         return null;
     }
+    Tile FindTileAt(int x, int z)
+{
+    // Sahnede tüm Tile'ları bul, koordinatı tutanı seç
+    foreach (var t in FindObjectsOfType<Tile>())
+    {
+        if (t.x == x && t.z == z)
+            return t;
+    }
+    return null;
+}
+void UpdateCheckHighlight(PieceSide side, bool inCheck)
+{
+    // Eski kırmızı highlight'ı kapat
+    if (checkHighlightTile != null && checkHighlightTile.highlightRenderer != null)
+    {
+        checkHighlightTile.highlightRenderer.enabled = false;
+    }
+    checkHighlightTile = null;
+
+    // Şah tehdit altında değilse ya da materyal yoksa devam etme
+    if (!inCheck || checkHighlightMat == null)
+        return;
+
+    // Bu tarafın şahını bul
+    Piece king = FindKing(side);
+    if (king == null) return;
+
+    // Şahın durduğu kareyi bul
+    Tile kingTile = FindTileAt(king.x, king.z);
+    if (kingTile == null || kingTile.highlightRenderer == null)
+        return;
+
+    // Overlay rengini kırmızı uyarı materyaline çevir ve aç
+    kingTile.highlightRenderer.sharedMaterial = checkHighlightMat;
+    kingTile.highlightRenderer.enabled = true;
+
+    // Sonradan kapatmak için referansı tut
+    checkHighlightTile = kingTile;
+}
+
 
     bool IsSquareAttacked(int x, int z, PieceSide bySide)
     {

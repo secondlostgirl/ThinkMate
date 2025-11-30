@@ -1,18 +1,23 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 public class SelectionController : MonoBehaviour
 {
     public Camera cam;
 
-    // Normal kare materyalleri
+    // Karelerin normal materyalleri (fallback için, overlay kullanıyoruz aslında)
     public Material normalLightMat;
     public Material normalDarkMat;
 
-    // Seçili kare için vurgu
-    public Material highlightMat;
+    // Seçili kare ve legal hamle overlay materyalleri
+    public Material highlightMat;      // seçili kare
+    public Material moveHighlightMat;  // legal hedef kare
 
-    private Tile  selectedTile;   // highlight'lı kare
-    private Piece selectedPiece;  // seçili taş
+    private Tile  selectedTile;        // şu an seçili kare
+    private Piece selectedPiece;       // şu an seçili taş
+
+    // Legal hedef karelerin listesi (sonra hepsini kapatmak için)
+    private readonly List<Tile> moveHighlightTiles = new List<Tile>();
 
     void Awake()
     {
@@ -21,7 +26,7 @@ public class SelectionController : MonoBehaviour
 
     void Update()
     {
-        // Oyun bittiyse veya terfi bekliyorsak input alma
+        // Terfi bekliyorsak veya oyun bittiyse input alma
         if (PieceManager.I != null &&
             (PieceManager.I.promotionPending || PieceManager.I.gameOver))
             return;
@@ -52,14 +57,14 @@ public class SelectionController : MonoBehaviour
     {
         if (PieceManager.I == null) return;
 
-        // Terfi paneli açıkken veya oyun bittiyken hiçbir şey yapma
+        // Terfi paneli açıksa veya oyun bittiyse hiçbir şey yapma
         if (PieceManager.I.promotionPending || PieceManager.I.gameOver)
             return;
 
         // Karede taş var mı?
         var pieceOnTile = PieceManager.I.GetAt(tile.x, tile.z);
 
-        // Hiç seçim yoksa ve karede taş varsa: SIRA kontrolüyle seç
+        // Henüz seçim yoksa ve karede taş varsa → ve OYUN SIRASI o taştaysa seç
         if (selectedPiece == null)
         {
             if (pieceOnTile != null && IsCurrentTurn(pieceOnTile.side))
@@ -69,62 +74,128 @@ public class SelectionController : MonoBehaviour
             return;
         }
 
-        // Seçiliyken kendi taşına tıklarsan: seçimi o taşa taşı (reselect)
+        // Seçiliyken kendi taşına tıklarsan → o taşa yeniden seç
         if (pieceOnTile != null && pieceOnTile.side == selectedPiece.side)
         {
             SetSelection(tile, pieceOnTile);
             return;
         }
 
-        // Hedefe taşıma denemesi
+        // Hedef kareye hamle denemesi
         bool moved = PieceManager.I.Move(selectedPiece, tile.x, tile.z);
-        if (moved)
-        {
-           
-        }
 
-        // Görseli ve seçimi temizle
+        // DİKKAT: PieceManager.Move başarılı olduğunda artık KENDİ İÇİNDE
+        // snapshot alıp AfterMove() çağırıyor; burada tekrar çağırmıyoruz!
+
+        // Seçimi ve overlay'leri temizle
         ClearSelection();
     }
 
     bool IsCurrentTurn(PieceSide side)
     {
-        // Artık TurnManager yerine PieceManager.sideToMove kullanıyoruz
         if (PieceManager.I == null) return true;
-
         return PieceManager.I.sideToMove == side;
     }
 
-    // --- Yardımcı: güvenli Renderer bulucu (tile.rend boşsa GetComponent ile bulur)
-    Renderer GetRenderer(Tile t)
-    {
-        if (t == null) return null;
-        return t.rend != null ? t.rend : t.GetComponent<Renderer>();
-    }
+    // ------------------- HIGHLIGHT / OVERLAY YARDIMCILARI -------------------
 
     void SetSelection(Tile tile, Piece piece)
     {
-        // Eski highlight'ı kapat
-        if (selectedTile != null) ResetTileVisual(selectedTile);
+        // Önce eski seçimi + legal kareleri tamamen temizle
+        ClearSelection();
 
         selectedTile  = tile;
         selectedPiece = piece;
 
-        var r = GetRenderer(selectedTile);
-        if (r) r.sharedMaterial = highlightMat;
+        // Seçili kareyi highlight et
+        EnableOverlay(tile, highlightMat);
+
+        // Legal hamleleri göster
+        HighlightLegalMoves(piece);
     }
 
-    void ResetTileVisual(Tile t)
+    void HighlightLegalMoves(Piece piece)
     {
-        var r = GetRenderer(t);
-        if (!r) return;
-        r.sharedMaterial = t.isLight ? normalLightMat : normalDarkMat;
+        moveHighlightTiles.Clear();
+
+        if (PieceManager.I == null || piece == null) return;
+
+        var allTiles = FindObjectsOfType<Tile>();
+
+        foreach (var t in allTiles)
+        {
+            // aynı kareyi (taşın şu an bulunduğu kare) atla
+            if (t.x == piece.x && t.z == piece.z)
+                continue;
+
+            // PieceManager'a "bu kareye legal hamle mi?" diye soracağız
+            if (!PieceManager.I.IsLegalMove(piece, t.x, t.z))
+                continue;
+
+            // Legal ise overlay aç
+            EnableOverlay(t, moveHighlightMat);
+            moveHighlightTiles.Add(t);
+        }
+    }
+
+    void EnableOverlay(Tile t, Material mat)
+    {
+        if (t == null) return;
+
+        if (t.highlightRenderer != null)
+        {
+            if (mat != null)
+                t.highlightRenderer.sharedMaterial = mat;
+
+            t.highlightRenderer.enabled = true;
+        }
+        else
+        {
+            // Overlay yoksa, eski sisteme geri dön: taban materyali değiştir
+            var r = t.rend != null ? t.rend : t.GetComponent<Renderer>();
+            if (!r) return;
+
+            if (mat != null)
+                r.sharedMaterial = mat;
+        }
+    }
+
+    void DisableOverlay(Tile t)
+    {
+        if (t == null) return;
+
+        if (t.highlightRenderer != null)
+        {
+            t.highlightRenderer.enabled = false;
+        }
+        else
+        {
+            // Fallback: taban materyali eski haline döndür
+            var r = t.rend != null ? t.rend : t.GetComponent<Renderer>();
+            if (!r) return;
+
+            r.sharedMaterial = t.isLight ? normalLightMat : normalDarkMat;
+        }
     }
 
     void ClearSelection()
     {
-        if (selectedTile != null) ResetTileVisual(selectedTile);
-        selectedTile = null;
+        // Seçili kare overlay'ini kapat
+        if (selectedTile != null)
+            DisableOverlay(selectedTile);
+
+        // Legal kare overlay'lerini kapat
+        if (moveHighlightTiles != null)
+        {
+            foreach (var t in moveHighlightTiles)
+            {
+                if (t != null)
+                    DisableOverlay(t);
+            }
+            moveHighlightTiles.Clear();
+        }
+
+        selectedTile  = null;
         selectedPiece = null;
     }
 }
